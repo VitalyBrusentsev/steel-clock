@@ -1,0 +1,11 @@
+[Unit]
+Description=steel-clock Nova Pro OLED daemon
+
+[Service]
+Type=simple
+ExecStart=%h/.cargo/bin/steel-clock daemon
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
