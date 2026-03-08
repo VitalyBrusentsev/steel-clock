@@ -18,6 +18,7 @@ const OLED_WIDTH: usize = 128;
 const OLED_HEIGHT: usize = 64;
 const LOOP_SLEEP: Duration = Duration::from_millis(250);
 const RECONNECT_BACKOFF: Duration = Duration::from_secs(2);
+const CLOCK_TIME_SCALE: usize = 3;
 
 pub struct DaemonOptions {
     pub socket_path: PathBuf,
@@ -283,13 +284,29 @@ impl SteelClockDaemon {
         let minute = now.minute() as usize;
         let offsets = [-2, -1, 0, 1, 2];
         let offset = offsets[minute % offsets.len()];
+        let status_lines = self.status_lines();
 
         let mut frame = Framebuffer::new(OLED_WIDTH, OLED_HEIGHT);
-        frame.draw_text_centered(&now.format("%H:%M").to_string(), 4, 2, offset);
-        frame.draw_text_centered(&now.format("%a %d %b").to_string(), 24, 1, 0);
-        frame.draw_text_centered("STEEL CLOCK", 38, 1, 0);
-        frame.draw_text_centered(&self.status_line_one(), 48, 1, 0);
-        frame.draw_text_centered(&self.status_line_two(), 56, 1, 0);
+        frame.draw_text_centered(
+            &now.format("%H:%M").to_string(),
+            8,
+            CLOCK_TIME_SCALE,
+            offset,
+        );
+
+        let date_y = match status_lines.len() {
+            0 => 42,
+            1 => 38,
+            _ => 34,
+        };
+        frame.draw_text_centered(&now.format("%a %d %b").to_string(), date_y, 1, 0);
+
+        if let Some(line) = status_lines.first() {
+            frame.draw_text_centered(line, 48, 1, 0);
+        }
+        if let Some(line) = status_lines.get(1) {
+            frame.draw_text_centered(line, 56, 1, 0);
+        }
         frame
     }
 
@@ -297,32 +314,41 @@ impl SteelClockDaemon {
         Framebuffer::from_centered_text_screen(OLED_WIDTH, OLED_HEIGHT, text)
     }
 
-    fn status_line_one(&self) -> String {
-        let rf = self
-            .device_status
-            .wireless_connected
-            .map(|connected| if connected { "rf:on" } else { "rf:off" })
-            .unwrap_or("rf:?");
-        let bt = self
-            .device_status
-            .bluetooth_audio_active
-            .map(|connected| if connected { "bt:on" } else { "bt:off" })
-            .unwrap_or("bt:?");
-        format!("{rf}  {bt}")
-    }
+    fn status_lines(&self) -> Vec<String> {
+        let mut items = Vec::new();
 
-    fn status_line_two(&self) -> String {
-        let volume = self
-            .device_status
-            .volume_percent
-            .map(|value| format!("vol:{value:>3}%"))
-            .unwrap_or_else(|| "vol: ?".to_string());
-        let battery = self
-            .device_status
-            .battery_headset_raw
-            .map(|value| format!("bat:{value:>2}"))
-            .unwrap_or_else(|| "bat:?".to_string());
-        format!("{volume}  {battery}")
+        if let Some(connected) = self.device_status.wireless_connected {
+            items.push(if connected {
+                "rf:on".to_string()
+            } else {
+                "rf:off".to_string()
+            });
+        }
+
+        if let Some(active) = self.device_status.bluetooth_audio_active {
+            items.push(if active {
+                "bt:on".to_string()
+            } else {
+                "bt:off".to_string()
+            });
+        }
+
+        if let Some(volume) = self.device_status.volume_percent {
+            items.push(format!("vol:{volume:>3}%"));
+        }
+
+        if let Some(battery) = self.device_status.battery_headset_raw {
+            items.push(format!("bat:{battery:>2}"));
+        }
+
+        match items.len() {
+            0 => Vec::new(),
+            1 | 2 => vec![items.join("  ")],
+            _ => {
+                let split_at = items.len().div_ceil(2);
+                vec![items[..split_at].join("  "), items[split_at..].join("  ")]
+            }
+        }
     }
 
     fn handle_requests(&mut self, listener: &UnixListener) -> Result<()> {
