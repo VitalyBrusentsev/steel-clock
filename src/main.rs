@@ -33,6 +33,7 @@ enum Command {
     Status(SocketArgs),
     DumpDevices,
     DrawTest(DrawTestArgs),
+    BlankTest(BlankTestArgs),
 }
 
 #[derive(Args)]
@@ -74,7 +75,7 @@ struct BrightnessArgs {
 
 #[derive(Args)]
 struct DrawTestArgs {
-    #[arg(long, default_value_t = 10)]
+    #[arg(long, default_value_t = 3)]
     brightness: u8,
 
     #[arg(long, default_value_t = false)]
@@ -82,6 +83,12 @@ struct DrawTestArgs {
 
     #[arg(default_value = "TEST")]
     text: String,
+}
+
+#[derive(Args)]
+struct BlankTestArgs {
+    #[arg(long, default_value_t = 3)]
+    brightness: u8,
 }
 
 fn main() {
@@ -118,6 +125,7 @@ fn real_main() -> Result<()> {
         Command::Status(args) => send_and_print(args.socket.as_deref(), ClientCommand::GetStatus),
         Command::DumpDevices => device::Device::dump_supported_devices(),
         Command::DrawTest(args) => run_draw_test(args),
+        Command::BlankTest(args) => run_blank_test(args),
     }
 }
 
@@ -130,6 +138,14 @@ fn run_draw_test(args: DrawTestArgs) -> Result<()> {
         device.return_to_official_ui()?;
     }
     println!("draw test sent");
+    Ok(())
+}
+
+fn run_blank_test(args: BlankTestArgs) -> Result<()> {
+    let device = Device::connect()?;
+    device.set_brightness(args.brightness)?;
+    device.draw_frame(&Framebuffer::new(128, 64))?;
+    println!("blank test sent; process exiting");
     Ok(())
 }
 

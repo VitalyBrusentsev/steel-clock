@@ -40,6 +40,12 @@ Send a one-shot OLED test without the daemon:
 cargo run -- draw-test "HELLO"
 ```
 
+Send a one-shot blank screen without the daemon and exit immediately:
+
+```sh
+cargo run -- blank-test
+```
+
 Send commands from another terminal:
 
 ```sh
