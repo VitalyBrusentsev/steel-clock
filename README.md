@@ -72,10 +72,12 @@ cargo run -- dump-devices
 To access the device without root, install the provided udev rule and reload udev:
 
 ```sh
-sudo cp contrib/11-steelseries-arctis-nova.rules /etc/udev/rules.d/
+sudo cp contrib/99-steelseries-arctis-nova.rules /etc/udev/rules.d/
 sudo udevadm control --reload
 sudo udevadm trigger
 ```
+
+The rule intentionally uses a late `99-` prefix so its USB permissions are not reset by earlier stock udev defaults.
 
 That rule grants access to both:
 
