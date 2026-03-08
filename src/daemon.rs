@@ -19,6 +19,7 @@ const OLED_HEIGHT: usize = 64;
 const LOOP_SLEEP: Duration = Duration::from_millis(250);
 const RECONNECT_BACKOFF: Duration = Duration::from_secs(2);
 const CLOCK_TIME_SCALE: usize = 3;
+const CLOCK_TIME_FONT_HEIGHT: f32 = 36.0;
 
 pub struct DaemonOptions {
     pub socket_path: PathBuf,
@@ -294,12 +295,19 @@ impl SteelClockDaemon {
         let status_lines = self.status_lines();
 
         let mut frame = Framebuffer::new(OLED_WIDTH, OLED_HEIGHT);
-        frame.draw_text_centered(
+        if !frame.draw_clock_text_centered(
             &now.format("%H:%M").to_string(),
-            8,
-            CLOCK_TIME_SCALE,
+            4,
+            CLOCK_TIME_FONT_HEIGHT,
             offset,
-        );
+        ) {
+            frame.draw_text_centered(
+                &now.format("%H:%M").to_string(),
+                8,
+                CLOCK_TIME_SCALE,
+                offset,
+            );
+        }
 
         let date_y = match status_lines.len() {
             0 => 42,

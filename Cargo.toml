@@ -12,6 +12,7 @@ font8x8 = "0.3"
 hidapi = { version = "=2.6.4", default-features = false, features = ["linux-native-basic-udev"] }
 libc = "0.2"
 nusb = "0.2"
+rusttype = "0.9"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 spin_sleep = "1.3"

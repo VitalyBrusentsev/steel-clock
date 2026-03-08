@@ -1,4 +1,16 @@
 use font8x8::{BASIC_FONTS, UnicodeFonts};
+use rusttype::{Font, PositionedGlyph, Scale, point};
+use std::fs;
+use std::sync::OnceLock;
+
+const CLOCK_FONT_PATHS: &[&str] = &[
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationMono-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+];
+
+static CLOCK_FONT: OnceLock<Option<Font<'static>>> = OnceLock::new();
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Framebuffer {
@@ -61,6 +73,58 @@ impl Framebuffer {
         }
     }
 
+    pub fn draw_clock_text_centered(
+        &mut self,
+        text: &str,
+        y: i32,
+        pixel_height: f32,
+        x_offset: i32,
+    ) -> bool {
+        let Some(font) = clock_font() else {
+            return false;
+        };
+
+        let scale = Scale::uniform(pixel_height);
+        let v_metrics = font.v_metrics(scale);
+        let glyphs: Vec<_> = font
+            .layout(text, scale, point(0.0, v_metrics.ascent))
+            .collect();
+        let Some((min_x, max_x, min_y)) = glyph_bounds(&glyphs) else {
+            return false;
+        };
+
+        let text_width = max_x - min_x;
+        let target_x = ((self.width as i32 - text_width) / 2) + x_offset;
+        let dx = target_x - min_x;
+        let dy = y - min_y;
+
+        for glyph in glyphs {
+            let Some(bounds) = glyph.pixel_bounding_box() else {
+                continue;
+            };
+
+            glyph.draw(|gx, gy, coverage| {
+                let px = bounds.min.x + gx as i32 + dx;
+                let py = bounds.min.y + gy as i32 + dy;
+                if px < 0 || py < 0 {
+                    return;
+                }
+
+                let px = px as usize;
+                let py = py as usize;
+                if px >= self.width || py >= self.height {
+                    return;
+                }
+
+                if coverage_to_pixel(coverage, px, py) {
+                    self.set(px, py, true);
+                }
+            });
+        }
+
+        true
+    }
+
     pub fn draw_char(&mut self, ch: char, x: i32, y: i32, scale: usize) {
         let Some(glyph) = BASIC_FONTS.get(ch) else {
             return;
@@ -99,6 +163,43 @@ impl Framebuffer {
         framebuffer.draw_multiline_centered(text, top, 2, scale);
         framebuffer
     }
+}
+
+fn clock_font() -> Option<&'static Font<'static>> {
+    CLOCK_FONT.get_or_init(load_clock_font).as_ref()
+}
+
+fn load_clock_font() -> Option<Font<'static>> {
+    for path in CLOCK_FONT_PATHS {
+        let Ok(bytes) = fs::read(path) else {
+            continue;
+        };
+        let leaked = Box::leak(bytes.into_boxed_slice());
+        if let Some(font) = Font::try_from_bytes(leaked) {
+            return Some(font);
+        }
+    }
+    None
+}
+
+fn glyph_bounds(glyphs: &[PositionedGlyph<'_>]) -> Option<(i32, i32, i32)> {
+    let mut min_x = i32::MAX;
+    let mut max_x = i32::MIN;
+    let mut min_y = i32::MAX;
+    let mut saw_bounds = false;
+
+    for bounds in glyphs.iter().filter_map(PositionedGlyph::pixel_bounding_box) {
+        saw_bounds = true;
+        min_x = min_x.min(bounds.min.x);
+        max_x = max_x.max(bounds.max.x);
+        min_y = min_y.min(bounds.min.y);
+    }
+
+    saw_bounds.then_some((min_x, max_x, min_y))
+}
+
+fn coverage_to_pixel(coverage: f32, _x: usize, _y: usize) -> bool {
+    coverage >= 0.5
 }
 
 #[cfg(test)]
