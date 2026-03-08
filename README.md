@@ -1,22 +1,24 @@
 # steel-clock
 
-`steel-clock` is a small Rust daemon for the SteelSeries Arctis Nova Pro base station OLED on Linux.
+`steel-clock` is a small Rust daemon for the SteelSeries Arctis Nova Pro Wireless base station OLED on Linux.
 
-It keeps a background process attached to the HID interface, renders a simple idle clock, and accepts commands over a Unix socket so other tools can change what appears on the screen.
+It keeps a background process attached to the headset base station, renders a simple idle clock, and accepts commands over a Unix socket so other tools can change what appears on the screen.
 
-On this Linux setup, simple HID feature reports were not enough to update the OLED reliably. The current implementation falls back to claiming USB interface `4` directly and sending HID `SET_REPORT` control transfers for OLED drawing and other display commands.
+On some Linux systems, simple HID feature reports are not enough to update the OLED reliably. The current implementation falls back to claiming USB interface `4` directly and sending HID `SET_REPORT` control transfers for OLED drawing and other display commands.
+
+Tested so far with a SteelSeries Arctis Nova Pro Wireless base station (`1038:12e0`).
 
 ## Current protocol notes
 
-These details were derived from local USB inspection on this machine and cross-checked against the public `JerwuQu/ggoled` reverse-engineering work:
+These details were derived from local USB inspection and cross-checked against the public `JerwuQu/ggoled` reverse-engineering work:
 
-- Vendor/product: `1038:12e0` for the Arctis Nova Pro Wireless base station seen here.
+- Vendor/product: `1038:12e0` for the Arctis Nova Pro Wireless base station.
 - The OLED control path lives on HID interface `4`.
 - OLED frame writes use HID report ID `0x06` with command `0x93`.
 - Brightness uses command `0x85`.
 - Returning to the SteelSeries UI uses command `0x95`.
 - The same HID interface also emits event packets for volume, connection state, and battery-related fields.
-- On this machine, OLED drawing only became visible once interface `4` was detached and claimed over raw USB.
+- In the tested setup, OLED drawing only became visible once interface `4` was detached and claimed over raw USB.
 
 The battery values are still treated as raw reverse-engineered bytes in this project. That is intentional until we validate their exact scale.
 
