@@ -24,6 +24,7 @@ pub struct DaemonOptions {
     pub socket_path: PathBuf,
     pub brightness: u8,
     pub restore_ui_on_exit: bool,
+    pub blank_on_exit: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -79,7 +80,11 @@ pub fn run(options: DaemonOptions) -> Result<()> {
     })
     .context("failed to install signal handler")?;
 
-    let mut daemon = SteelClockDaemon::new(options.brightness, options.restore_ui_on_exit);
+    let mut daemon = SteelClockDaemon::new(
+        options.brightness,
+        options.restore_ui_on_exit,
+        options.blank_on_exit,
+    );
     while running.load(Ordering::SeqCst) {
         daemon.maybe_connect();
         daemon.handle_requests(&listener)?;
@@ -96,6 +101,7 @@ struct SteelClockDaemon {
     device: Option<Device>,
     brightness: u8,
     restore_ui_on_exit: bool,
+    blank_on_exit: bool,
     event_polling_enabled: bool,
     mode: DisplayMode,
     device_status: RuntimeStatus,
@@ -107,11 +113,12 @@ struct SteelClockDaemon {
 }
 
 impl SteelClockDaemon {
-    fn new(brightness: u8, restore_ui_on_exit: bool) -> Self {
+    fn new(brightness: u8, restore_ui_on_exit: bool, blank_on_exit: bool) -> Self {
         Self {
             device: None,
             brightness,
             restore_ui_on_exit,
+            blank_on_exit,
             event_polling_enabled: true,
             mode: DisplayMode::Clock,
             device_status: RuntimeStatus::default(),
@@ -464,8 +471,10 @@ impl SteelClockDaemon {
     }
 
     fn shutdown(&mut self) {
-        if self.restore_ui_on_exit {
-            if let Some(device) = self.device.as_ref() {
+        if let Some(device) = self.device.as_ref() {
+            if self.blank_on_exit {
+                let _ = device.draw_frame(&Framebuffer::new(OLED_WIDTH, OLED_HEIGHT));
+            } else if self.restore_ui_on_exit {
                 let _ = device.return_to_official_ui();
             }
         }

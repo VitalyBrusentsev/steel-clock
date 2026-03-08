@@ -7,7 +7,7 @@ edition = "2024"
 anyhow = "1.0"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { version = "4.5", features = ["derive"] }
-ctrlc = "3.4"
+ctrlc = { version = "3.4", features = ["termination"] }
 font8x8 = "0.3"
 hidapi = { version = "=2.6.4", default-features = false, features = ["linux-native-basic-udev"] }
 libc = "0.2"

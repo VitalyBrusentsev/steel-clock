@@ -3,7 +3,7 @@ Description=steel-clock Nova Pro OLED daemon
 
 [Service]
 Type=simple
-ExecStart=%h/.cargo/bin/steel-clock daemon
+ExecStart=%h/.cargo/bin/steel-clock daemon --blank-on-exit
 Restart=on-failure
 RestartSec=2
 

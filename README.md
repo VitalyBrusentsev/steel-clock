@@ -48,6 +48,8 @@ Send a one-shot blank screen without the daemon and exit immediately:
 cargo run -- blank-test
 ```
 
+These direct one-shot commands require the daemon to be stopped first, because the OLED interface is used exclusively while `steel-clock daemon` is running.
+
 Send commands from another terminal:
 
 ```sh
@@ -89,6 +91,27 @@ mkdir -p ~/.config/systemd/user
 cp contrib/steel-clock.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now steel-clock.service
+```
+
+The sample service starts the daemon with `--blank-on-exit`, so stopping the service leaves the OLED dark instead of returning to the stock SteelSeries UI.
+
+You can also run the daemon manually with one of these exit behaviors:
+
+```sh
+steel-clock daemon --blank-on-exit
+steel-clock daemon --restore-ui-on-exit
+```
+
+If you want the stock UI back explicitly while the daemon is running, use:
+
+```sh
+steel-clock return-ui
+```
+
+With the sample service installed, a simple stop is enough for night mode:
+
+```sh
+systemctl --user stop steel-clock
 ```
 
 ## Known limitations

@@ -50,8 +50,11 @@ struct DaemonArgs {
     #[arg(long, default_value_t = 3)]
     brightness: u8,
 
-    #[arg(long, default_value_t = true)]
+    #[arg(long, default_value_t = false, conflicts_with = "blank_on_exit")]
     restore_ui_on_exit: bool,
+
+    #[arg(long, default_value_t = false, conflicts_with = "restore_ui_on_exit")]
+    blank_on_exit: bool,
 }
 
 #[derive(Args)]
@@ -105,6 +108,7 @@ fn real_main() -> Result<()> {
             socket_path: args.socket.unwrap_or_else(default_socket_path),
             brightness: args.brightness,
             restore_ui_on_exit: args.restore_ui_on_exit,
+            blank_on_exit: args.blank_on_exit,
         }),
         Command::Text(args) => send_and_print(
             args.socket.as_deref(),
