@@ -4,6 +4,8 @@
 
 It keeps a background process attached to the HID interface, renders a simple idle clock, and accepts commands over a Unix socket so other tools can change what appears on the screen.
 
+On this Linux setup, simple HID feature reports were not enough to update the OLED reliably. The current implementation falls back to claiming USB interface `4` directly and sending HID `SET_REPORT` control transfers for OLED drawing and other display commands.
+
 ## Current protocol notes
 
 These details were derived from local USB inspection on this machine and cross-checked against the public `JerwuQu/ggoled` reverse-engineering work:
@@ -14,6 +16,7 @@ These details were derived from local USB inspection on this machine and cross-c
 - Brightness uses command `0x85`.
 - Returning to the SteelSeries UI uses command `0x95`.
 - The same HID interface also emits event packets for volume, connection state, and battery-related fields.
+- On this machine, OLED drawing only became visible once interface `4` was detached and claimed over raw USB.
 
 The battery values are still treated as raw reverse-engineered bytes in this project. That is intentional until we validate their exact scale.
 
@@ -29,6 +32,12 @@ Start the daemon:
 
 ```sh
 cargo run -- daemon
+```
+
+Send a one-shot OLED test without the daemon:
+
+```sh
+cargo run -- draw-test "HELLO"
 ```
 
 Send commands from another terminal:
@@ -58,6 +67,11 @@ sudo udevadm control --reload
 sudo udevadm trigger
 ```
 
+That rule grants access to both:
+
+- `/dev/hidraw*` for descriptor discovery and event polling
+- `/dev/bus/usb/*` for the direct USB control-transfer fallback used by OLED drawing
+
 ## systemd user service
 
 Copy the sample unit into your user systemd directory:
@@ -68,3 +82,8 @@ cp contrib/steel-clock.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now steel-clock.service
 ```
+
+## Known limitations
+
+- The OLED path is working, but battery and connection telemetry may stay empty while the daemon has claimed interface `4`.
+- The official SteelSeries UI and `steel-clock` should not both try to control the display at the same time.

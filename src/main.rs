@@ -4,6 +4,8 @@ mod framebuffer;
 mod ipc;
 
 use crate::daemon::DaemonOptions;
+use crate::device::Device;
+use crate::framebuffer::Framebuffer;
 use crate::ipc::{ClientCommand, ServerResponse, default_socket_path, send_command};
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
@@ -30,6 +32,7 @@ enum Command {
     ReturnUi(SocketArgs),
     Status(SocketArgs),
     DumpDevices,
+    DrawTest(DrawTestArgs),
 }
 
 #[derive(Args)]
@@ -69,6 +72,18 @@ struct BrightnessArgs {
     value: u8,
 }
 
+#[derive(Args)]
+struct DrawTestArgs {
+    #[arg(long, default_value_t = 10)]
+    brightness: u8,
+
+    #[arg(long, default_value_t = false)]
+    return_ui: bool,
+
+    #[arg(default_value = "TEST")]
+    text: String,
+}
+
 fn main() {
     if let Err(error) = real_main() {
         eprintln!("{error:#}");
@@ -102,7 +117,20 @@ fn real_main() -> Result<()> {
         }
         Command::Status(args) => send_and_print(args.socket.as_deref(), ClientCommand::GetStatus),
         Command::DumpDevices => device::Device::dump_supported_devices(),
+        Command::DrawTest(args) => run_draw_test(args),
     }
+}
+
+fn run_draw_test(args: DrawTestArgs) -> Result<()> {
+    let device = Device::connect()?;
+    device.set_brightness(args.brightness)?;
+    let framebuffer = Framebuffer::from_centered_text_screen(128, 64, &args.text);
+    device.draw_frame(&framebuffer)?;
+    if args.return_ui {
+        device.return_to_official_ui()?;
+    }
+    println!("draw test sent");
+    Ok(())
 }
 
 fn send_and_print(socket: Option<&std::path::Path>, command: ClientCommand) -> Result<()> {

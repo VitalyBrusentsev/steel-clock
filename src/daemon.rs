@@ -95,6 +95,7 @@ struct SteelClockDaemon {
     device: Option<Device>,
     brightness: u8,
     restore_ui_on_exit: bool,
+    event_polling_enabled: bool,
     mode: DisplayMode,
     device_status: RuntimeStatus,
     last_error: Option<String>,
@@ -110,6 +111,7 @@ impl SteelClockDaemon {
             device: None,
             brightness,
             restore_ui_on_exit,
+            event_polling_enabled: true,
             mode: DisplayMode::Clock,
             device_status: RuntimeStatus::default(),
             last_error: None,
@@ -128,6 +130,7 @@ impl SteelClockDaemon {
         match Device::connect() {
             Ok(device) => {
                 self.last_error = None;
+                self.event_polling_enabled = true;
                 if let Err(error) = device.set_brightness(self.brightness) {
                     self.last_error = Some(format!("{error:#}"));
                 }
@@ -166,10 +169,8 @@ impl SteelClockDaemon {
             return;
         }
 
-        if let Err(error) = self.poll_events() {
-            self.last_error = Some(format!("{error:#}"));
-            self.device = None;
-            self.next_connect_attempt_at = Instant::now() + RECONNECT_BACKOFF;
+        if self.event_polling_enabled && self.poll_events().is_err() {
+            self.event_polling_enabled = false;
         }
     }
 
@@ -293,18 +294,7 @@ impl SteelClockDaemon {
     }
 
     fn build_text_frame(&self, text: &str) -> Framebuffer {
-        let mut frame = Framebuffer::new(OLED_WIDTH, OLED_HEIGHT);
-        let line_count = text.lines().count().max(1);
-        let scale = if line_count == 1 && text.chars().count() <= 8 {
-            2
-        } else {
-            1
-        };
-        let text_height =
-            (line_count as i32 * 8 * scale as i32) + (line_count.saturating_sub(1) as i32 * 2);
-        let top = ((OLED_HEIGHT as i32 - text_height) / 2).max(0);
-        frame.draw_multiline_centered(text, top, 2, scale);
-        frame
+        Framebuffer::from_centered_text_screen(OLED_WIDTH, OLED_HEIGHT, text)
     }
 
     fn status_line_one(&self) -> String {

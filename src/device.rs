@@ -23,6 +23,7 @@ const OLED_RETURN_TO_UI_COMMAND: u8 = 0x95;
 const SCREEN_REPORT_WIDTH: usize = 64;
 const SCREEN_REPORT_SIZE: usize = 1024;
 const HID_SET_REPORT_REQUEST: u8 = 0x09;
+const HID_REPORT_TYPE_OUTPUT: u16 = 0x02;
 const HID_REPORT_TYPE_FEATURE: u16 = 0x03;
 const USB_CONTROL_TIMEOUT: Duration = Duration::from_millis(1000);
 
@@ -227,20 +228,16 @@ impl Device {
         report[0] = OLED_REPORT_ID;
         report[1] = OLED_BRIGHTNESS_COMMAND;
         report[2] = value;
-        self.oled
-            .write(&report)
-            .context("failed to send brightness report")?;
-        Ok(())
+        self.retry_output_report(&report)
+            .context("failed to send brightness report")
     }
 
     pub fn return_to_official_ui(&self) -> Result<()> {
         let mut report = [0u8; 64];
         report[0] = OLED_REPORT_ID;
         report[1] = OLED_RETURN_TO_UI_COMMAND;
-        self.oled
-            .write(&report)
-            .context("failed to return OLED to official UI")?;
-        Ok(())
+        self.retry_output_report(&report)
+            .context("failed to return OLED to official UI")
     }
 
     pub fn draw_frame(&self, framebuffer: &Framebuffer) -> Result<()> {
@@ -260,12 +257,20 @@ impl Device {
     }
 
     fn retry_feature_report(&self, report: &[u8]) -> Result<()> {
+        self.retry_report(report, ReportKind::Feature)
+    }
+
+    fn retry_output_report(&self, report: &[u8]) -> Result<()> {
+        self.retry_report(report, ReportKind::Output)
+    }
+
+    fn retry_report(&self, report: &[u8], kind: ReportKind) -> Result<()> {
         let mut attempt = 0u64;
         loop {
-            match self.oled.send_feature_report(report) {
+            match self.send_hid_report(report, kind) {
                 Ok(()) => return Ok(()),
                 Err(error) => {
-                    if self.try_usb_feature_report(report).is_ok() {
+                    if self.try_usb_report(report, kind).is_ok() {
                         return Ok(());
                     }
 
@@ -280,14 +285,27 @@ impl Device {
         }
     }
 
-    fn try_usb_feature_report(&self, report: &[u8]) -> Result<()> {
+    fn send_hid_report(&self, report: &[u8], kind: ReportKind) -> Result<()> {
+        match kind {
+            ReportKind::Feature => self
+                .oled
+                .send_feature_report(report)
+                .context("hidraw feature report send failed"),
+            ReportKind::Output => self
+                .oled
+                .send_output_report(report)
+                .context("hidraw output report send failed"),
+        }
+    }
+
+    fn try_usb_report(&self, report: &[u8], kind: ReportKind) -> Result<()> {
         if report.is_empty() {
-            bail!("cannot send empty USB feature report");
+            bail!("cannot send empty USB HID report");
         }
 
         let report_id = report[0];
         let payload = if report_id == 0 { &report[1..] } else { report };
-        let value = (HID_REPORT_TYPE_FEATURE << 8) | report_id as u16;
+        let value = (kind.report_type() << 8) | report_id as u16;
 
         let _keep_device_alive = &self.usb;
         self.usb_interface
@@ -303,7 +321,12 @@ impl Device {
                 USB_CONTROL_TIMEOUT,
             )
             .wait()
-            .context("USB control-transfer fallback for OLED feature report failed")
+            .with_context(|| match kind {
+                ReportKind::Feature => {
+                    "USB control-transfer fallback for OLED feature report failed"
+                }
+                ReportKind::Output => "USB control-transfer fallback for OLED output report failed",
+            })
     }
 
     fn build_draw_report(
@@ -382,6 +405,21 @@ impl Device {
                 charging: buffer[3],
             }),
             _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ReportKind {
+    Feature,
+    Output,
+}
+
+impl ReportKind {
+    fn report_type(self) -> u16 {
+        match self {
+            Self::Feature => HID_REPORT_TYPE_FEATURE,
+            Self::Output => HID_REPORT_TYPE_OUTPUT,
         }
     }
 }

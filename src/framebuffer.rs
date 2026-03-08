@@ -84,6 +84,21 @@ impl Framebuffer {
             }
         }
     }
+
+    pub fn from_centered_text_screen(width: usize, height: usize, text: &str) -> Self {
+        let mut framebuffer = Self::new(width, height);
+        let line_count = text.lines().count().max(1);
+        let scale = if line_count == 1 && text.chars().count() <= 8 {
+            2
+        } else {
+            1
+        };
+        let text_height =
+            (line_count as i32 * 8 * scale as i32) + (line_count.saturating_sub(1) as i32 * 2);
+        let top = ((height as i32 - text_height) / 2).max(0);
+        framebuffer.draw_multiline_centered(text, top, 2, scale);
+        framebuffer
+    }
 }
 
 #[cfg(test)]
@@ -102,5 +117,11 @@ mod tests {
         let framebuffer = Framebuffer::new(128, 64);
         assert_eq!(framebuffer.measure_text("AB", 1), 16);
         assert_eq!(framebuffer.measure_text("AB", 2), 32);
+    }
+
+    #[test]
+    fn centered_text_screen_renders_pixels() {
+        let framebuffer = Framebuffer::from_centered_text_screen(128, 64, "TEST");
+        assert!(framebuffer.pixels.iter().any(|pixel| *pixel == 1));
     }
 }
