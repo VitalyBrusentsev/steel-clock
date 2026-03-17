@@ -20,7 +20,7 @@ const LOOP_SLEEP: Duration = Duration::from_millis(250);
 const RECONNECT_BACKOFF: Duration = Duration::from_secs(2);
 const CLOCK_TIME_SCALE: usize = 3;
 const CLOCK_TIME_FONT_HEIGHT: f32 = 36.0;
-
+const CLOCK_DATE_GLYPH_SIZE: usize = 13;
 pub struct DaemonOptions {
     pub socket_path: PathBuf,
     pub brightness: u8,
@@ -293,28 +293,44 @@ impl SteelClockDaemon {
         let offsets = [-2, -1, 0, 1, 2];
         let offset = offsets[minute % offsets.len()];
         let status_lines = self.status_lines();
+        let status_count = status_lines.len();
+
+        let time_y = match status_count {
+            0 => 4,
+            1 => 2,
+            _ => 0,
+        };
+        let (date_y, weekday_y) = match status_count {
+            0 => (39, 53),
+            1 => (36, 49),
+            _ => (31, 44),
+        };
+        let date_text = now.format("%d %b").to_string();
+        let weekday_text = now.format("%A").to_string();
 
         let mut frame = Framebuffer::new(OLED_WIDTH, OLED_HEIGHT);
         if !frame.draw_clock_text_centered(
             &now.format("%H:%M").to_string(),
-            4,
+            time_y,
             CLOCK_TIME_FONT_HEIGHT,
             offset,
         ) {
             frame.draw_text_centered(
                 &now.format("%H:%M").to_string(),
-                8,
+                time_y + 4,
                 CLOCK_TIME_SCALE,
                 offset,
             );
         }
 
-        let date_y = match status_lines.len() {
-            0 => 42,
-            1 => 38,
-            _ => 34,
-        };
-        frame.draw_text_centered(&now.format("%a %d %b").to_string(), date_y, 1, 0);
+        frame.draw_text_centered_scaled(
+            &date_text,
+            date_y,
+            CLOCK_DATE_GLYPH_SIZE,
+            CLOCK_DATE_GLYPH_SIZE,
+            0,
+        );
+        frame.draw_text_centered(&weekday_text, weekday_y, 1, 0);
 
         if let Some(line) = status_lines.first() {
             frame.draw_text_centered(line, 48, 1, 0);

@@ -54,6 +54,19 @@ impl Framebuffer {
         self.draw_text(text, x, y, scale);
     }
 
+    pub fn draw_text_centered_scaled(
+        &mut self,
+        text: &str,
+        y: i32,
+        glyph_width: usize,
+        glyph_height: usize,
+        x_offset: i32,
+    ) {
+        let text_width = self.measure_text_scaled(text, glyph_width) as i32;
+        let x = ((self.width as i32 - text_width) / 2) + x_offset;
+        self.draw_text_scaled(text, x, y, glyph_width, glyph_height);
+    }
+
     pub fn draw_multiline_centered(&mut self, text: &str, top: i32, line_gap: i32, scale: usize) {
         for (index, line) in text.lines().enumerate() {
             let y = top + index as i32 * ((8 * scale) as i32 + line_gap);
@@ -66,10 +79,28 @@ impl Framebuffer {
         text.chars().count().saturating_mul(glyph_width)
     }
 
+    pub fn measure_text_scaled(&self, text: &str, glyph_width: usize) -> usize {
+        text.chars().count().saturating_mul(glyph_width)
+    }
+
     pub fn draw_text(&mut self, text: &str, x: i32, y: i32, scale: usize) {
         let glyph_width = (8 * scale) as i32;
         for (index, ch) in text.chars().enumerate() {
             self.draw_char(ch, x + glyph_width * index as i32, y, scale);
+        }
+    }
+
+    pub fn draw_text_scaled(
+        &mut self,
+        text: &str,
+        x: i32,
+        y: i32,
+        glyph_width: usize,
+        glyph_height: usize,
+    ) {
+        let glyph_width_i32 = glyph_width as i32;
+        for (index, ch) in text.chars().enumerate() {
+            self.draw_char_scaled(ch, x + glyph_width_i32 * index as i32, y, glyph_width, glyph_height);
         }
     }
 
@@ -149,6 +180,43 @@ impl Framebuffer {
         }
     }
 
+    pub fn draw_char_scaled(
+        &mut self,
+        ch: char,
+        x: i32,
+        y: i32,
+        glyph_width: usize,
+        glyph_height: usize,
+    ) {
+        let Some(glyph) = BASIC_FONTS.get(ch) else {
+            return;
+        };
+
+        for (row, byte) in glyph.iter().enumerate() {
+            let start_y = row * glyph_height / 8;
+            let end_y = ((row + 1) * glyph_height / 8).max(start_y + 1);
+
+            for column in 0..8 {
+                if (byte & (1 << column)) == 0 {
+                    continue;
+                }
+
+                let start_x = column * glyph_width / 8;
+                let end_x = ((column + 1) * glyph_width / 8).max(start_x + 1);
+
+                for py in start_y..end_y {
+                    for px in start_x..end_x {
+                        let target_x = x + px as i32;
+                        let target_y = y + py as i32;
+                        if target_x >= 0 && target_y >= 0 {
+                            self.set(target_x as usize, target_y as usize, true);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub fn from_centered_text_screen(width: usize, height: usize, text: &str) -> Self {
         let mut framebuffer = Self::new(width, height);
         let line_count = text.lines().count().max(1);
@@ -221,8 +289,21 @@ mod tests {
     }
 
     #[test]
+    fn scaled_text_measurement_scales() {
+        let framebuffer = Framebuffer::new(128, 64);
+        assert_eq!(framebuffer.measure_text_scaled("AB", 13), 26);
+    }
+
+    #[test]
     fn centered_text_screen_renders_pixels() {
         let framebuffer = Framebuffer::from_centered_text_screen(128, 64, "TEST");
+        assert!(framebuffer.pixels.iter().any(|pixel| *pixel == 1));
+    }
+
+    #[test]
+    fn scaled_text_renders_pixels() {
+        let mut framebuffer = Framebuffer::new(128, 64);
+        framebuffer.draw_text_centered_scaled("17 Mar", 10, 13, 13, 0);
         assert!(framebuffer.pixels.iter().any(|pixel| *pixel == 1));
     }
 }
