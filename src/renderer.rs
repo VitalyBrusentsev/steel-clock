@@ -8,6 +8,7 @@ pub const OLED_HEIGHT: usize = 64;
 const CLOCK_TIME_SCALE: usize = 3;
 const CLOCK_TIME_FONT_HEIGHT: f32 = 36.0;
 const CLOCK_DATE_GLYPH_SIZE: usize = 13;
+const STATUS_FOOTER_Y: i32 = 56;
 
 #[derive(Debug, Default, Clone)]
 pub struct RuntimeStatus {
@@ -47,19 +48,10 @@ pub fn build_clock_frame(status: &RuntimeStatus) -> Framebuffer {
     let minute = now.minute() as usize;
     let offsets = [-2, -1, 0, 1, 2];
     let offset = offsets[minute % offsets.len()];
-    let status_lines = status_lines(status);
-    let status_count = status_lines.len();
+    let has_status = status.has_indicators();
 
-    let time_y = match status_count {
-        0 => 4,
-        1 => 2,
-        _ => 0,
-    };
-    let (date_y, weekday_y) = match status_count {
-        0 => (39, 53),
-        1 => (36, 49),
-        _ => (31, 44),
-    };
+    let time_y = if has_status { 0 } else { 4 };
+    let (date_y, weekday_y) = if has_status { (31, 44) } else { (39, 53) };
     let date_text = now.format("%d %b").to_string();
     let weekday_text = now.format("%A").to_string();
 
@@ -87,12 +79,10 @@ pub fn build_clock_frame(status: &RuntimeStatus) -> Framebuffer {
     );
     frame.draw_text_centered(&weekday_text, weekday_y, 1, 0);
 
-    if let Some(line) = status_lines.first() {
-        frame.draw_text_centered(line, 48, 1, 0);
+    if has_status {
+        draw_status_footer(&mut frame, status, STATUS_FOOTER_Y);
     }
-    if let Some(line) = status_lines.get(1) {
-        frame.draw_text_centered(line, 56, 1, 0);
-    }
+
     frame
 }
 
@@ -104,39 +94,116 @@ pub fn blank_frame() -> Framebuffer {
     Framebuffer::new(OLED_WIDTH, OLED_HEIGHT)
 }
 
-fn status_lines(status: &RuntimeStatus) -> Vec<String> {
-    let mut items = Vec::new();
-
-    if let Some(connected) = status.wireless_connected {
-        items.push(if connected {
-            "rf:on".to_string()
-        } else {
-            "rf:off".to_string()
-        });
+impl RuntimeStatus {
+    fn has_indicators(&self) -> bool {
+        self.wireless_connected.is_some()
+            || self.bluetooth_audio_active.is_some()
+            || self.battery_headset_raw.is_some()
     }
+}
 
-    if let Some(active) = status.bluetooth_audio_active {
-        items.push(if active {
-            "bt:on".to_string()
-        } else {
-            "bt:off".to_string()
-        });
+fn draw_status_footer(frame: &mut Framebuffer, status: &RuntimeStatus, y: i32) {
+    draw_checkbox_label(
+        frame,
+        6,
+        y,
+        "RF",
+        status.wireless_connected.unwrap_or(false),
+    );
+    draw_checkbox_label(
+        frame,
+        43,
+        y,
+        "BT",
+        status.bluetooth_audio_active.unwrap_or(false),
+    );
+    draw_battery_indicator(frame, 80, y + 1, status.battery_headset_raw);
+}
+
+fn draw_checkbox_label(frame: &mut Framebuffer, x: i32, y: i32, label: &str, checked: bool) {
+    draw_box(frame, x, y + 1, 6, 6);
+    if checked {
+        draw_line(frame, x + 1, y + 3, x + 2, y + 4);
+        draw_line(frame, x + 2, y + 4, x + 4, y + 2);
     }
+    frame.draw_text(label, x + 9, y, 1);
+}
 
-    if let Some(volume) = status.volume_percent {
-        items.push(format!("vol:{volume:>3}%"));
+fn draw_battery_indicator(frame: &mut Framebuffer, x: i32, y: i32, level: Option<u8>) {
+    const BODY_WIDTH: i32 = 38;
+    const BODY_HEIGHT: i32 = 6;
+    const SEGMENTS: i32 = 4;
+
+    draw_box(frame, x, y, BODY_WIDTH, BODY_HEIGHT);
+    draw_vertical_line(frame, x + BODY_WIDTH, y + 2, y + 3);
+
+    let Some(level) = level else {
+        draw_line(frame, x + 3, y + 4, x + BODY_WIDTH - 4, y + 1);
+        return;
+    };
+
+    let filled_segments = (level as i32).clamp(0, SEGMENTS);
+    let segment_width = 7;
+    for segment in 0..filled_segments {
+        let start_x = x + 3 + segment * (segment_width + 1);
+        fill_rect(frame, start_x, y + 2, segment_width, BODY_HEIGHT - 3);
     }
+}
 
-    if let Some(battery) = status.battery_headset_raw {
-        items.push(format!("bat:{battery:>2}"));
+fn draw_box(frame: &mut Framebuffer, x: i32, y: i32, width: i32, height: i32) {
+    draw_horizontal_line(frame, x, x + width - 1, y);
+    draw_horizontal_line(frame, x, x + width - 1, y + height - 1);
+    draw_vertical_line(frame, x, y, y + height - 1);
+    draw_vertical_line(frame, x + width - 1, y, y + height - 1);
+}
+
+fn fill_rect(frame: &mut Framebuffer, x: i32, y: i32, width: i32, height: i32) {
+    for py in y..(y + height) {
+        draw_horizontal_line(frame, x, x + width - 1, py);
     }
+}
 
-    match items.len() {
-        0 => Vec::new(),
-        1 | 2 => vec![items.join("  ")],
-        _ => {
-            let split_at = items.len().div_ceil(2);
-            vec![items[..split_at].join("  "), items[split_at..].join("  ")]
+fn draw_horizontal_line(frame: &mut Framebuffer, start_x: i32, end_x: i32, y: i32) {
+    for x in start_x..=end_x {
+        set_pixel(frame, x, y);
+    }
+}
+
+fn draw_vertical_line(frame: &mut Framebuffer, x: i32, start_y: i32, end_y: i32) {
+    for y in start_y..=end_y {
+        set_pixel(frame, x, y);
+    }
+}
+
+fn draw_line(frame: &mut Framebuffer, start_x: i32, start_y: i32, end_x: i32, end_y: i32) {
+    let dx = (end_x - start_x).abs();
+    let dy = -(end_y - start_y).abs();
+    let step_x = if start_x < end_x { 1 } else { -1 };
+    let step_y = if start_y < end_y { 1 } else { -1 };
+    let mut error = dx + dy;
+    let mut x = start_x;
+    let mut y = start_y;
+
+    loop {
+        set_pixel(frame, x, y);
+        if x == end_x && y == end_y {
+            break;
         }
+
+        let next_error = 2 * error;
+        if next_error >= dy {
+            error += dy;
+            x += step_x;
+        }
+        if next_error <= dx {
+            error += dx;
+            y += step_y;
+        }
+    }
+}
+
+fn set_pixel(frame: &mut Framebuffer, x: i32, y: i32) {
+    if x >= 0 && y >= 0 {
+        frame.set(x as usize, y as usize, true);
     }
 }
