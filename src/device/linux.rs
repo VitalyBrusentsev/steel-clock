@@ -1,3 +1,9 @@
+use super::protocol::{
+    DeviceEvent, HID_REPORT_TYPE_FEATURE, HID_REPORT_TYPE_OUTPUT, HID_SET_REPORT_REQUEST,
+    OLED_BRIGHTNESS_COMMAND, OLED_REPORT_ID, OLED_RETURN_TO_UI_COMMAND, SCREEN_REPORT_WIDTH,
+    STEELSERIES_VENDOR_ID, SUPPORTED_PRODUCT_IDS, TARGET_INTERFACE_NUMBER, build_draw_report,
+    parse_event,
+};
 use crate::framebuffer::Framebuffer;
 use anyhow::{Context, Result, anyhow, bail};
 use hidapi::{HidApi, HidDevice, MAX_REPORT_DESCRIPTOR_SIZE};
@@ -7,41 +13,7 @@ use nusb::{
 };
 use std::time::Duration;
 
-const STEELSERIES_VENDOR_ID: u16 = 0x1038;
-const SUPPORTED_PRODUCT_IDS: &[u16] = &[
-    0x12cb, // Arctis Nova Pro Wired
-    0x12cd, // Arctis Nova Pro Wired (Xbox)
-    0x12e0, // Arctis Nova Pro Wireless
-    0x12e5, // Arctis Nova Pro Wireless (Xbox)
-    0x225d, // White Xbox variant
-];
-const TARGET_INTERFACE_NUMBER: i32 = 4;
-const OLED_REPORT_ID: u8 = 0x06;
-const OLED_DRAW_COMMAND: u8 = 0x93;
-const OLED_BRIGHTNESS_COMMAND: u8 = 0x85;
-const OLED_RETURN_TO_UI_COMMAND: u8 = 0x95;
-const SCREEN_REPORT_WIDTH: usize = 64;
-const SCREEN_REPORT_SIZE: usize = 1024;
-const HID_SET_REPORT_REQUEST: u8 = 0x09;
-const HID_REPORT_TYPE_OUTPUT: u16 = 0x02;
-const HID_REPORT_TYPE_FEATURE: u16 = 0x03;
 const USB_CONTROL_TIMEOUT: Duration = Duration::from_millis(1000);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeviceEvent {
-    Volume {
-        value: u8,
-    },
-    Battery {
-        headset: u8,
-        charging: u8,
-    },
-    HeadsetConnection {
-        wireless: bool,
-        bluetooth: bool,
-        bluetooth_on: bool,
-    },
-}
 
 pub struct Device {
     oled: HidDevice,
@@ -248,7 +220,7 @@ impl Device {
         for start_x in (0..framebuffer.width()).step_by(SCREEN_REPORT_WIDTH) {
             let chunk_width = (framebuffer.width() - start_x).min(SCREEN_REPORT_WIDTH);
             let report =
-                Self::build_draw_report(framebuffer, start_x, 0, chunk_width, framebuffer.height());
+                build_draw_report(framebuffer, start_x, 0, chunk_width, framebuffer.height());
             self.retry_feature_report(&report)
                 .with_context(|| format!("failed to send OLED draw report at x={start_x}"))?;
         }
@@ -329,39 +301,6 @@ impl Device {
             })
     }
 
-    fn build_draw_report(
-        framebuffer: &Framebuffer,
-        start_x: usize,
-        start_y: usize,
-        width: usize,
-        height: usize,
-    ) -> [u8; SCREEN_REPORT_SIZE] {
-        let mut report = [0u8; SCREEN_REPORT_SIZE];
-        report[0] = OLED_REPORT_ID;
-        report[1] = OLED_DRAW_COMMAND;
-        report[2] = start_x as u8;
-        report[3] = start_y as u8;
-        report[4] = width as u8;
-        report[5] = height as u8;
-
-        // The device packs pixels column-by-column in groups of 8 vertical bits.
-        let stride_height = ((start_y % 8) + height).div_ceil(8) * 8;
-        for y in 0..height {
-            for x in 0..width {
-                if !framebuffer.get(start_x + x, start_y + y) {
-                    continue;
-                }
-
-                let packed_index = x * stride_height + y;
-                let byte_index = 6 + (packed_index / 8);
-                let bit_index = packed_index % 8;
-                report[byte_index] |= 1 << bit_index;
-            }
-        }
-
-        report
-    }
-
     pub fn read_pending_events(&self) -> Result<Vec<DeviceEvent>> {
         self.info
             .set_blocking_mode(false)
@@ -378,34 +317,12 @@ impl Device {
                 break;
             }
 
-            if let Some(event) = Self::parse_event(buffer) {
+            if let Some(event) = parse_event(buffer) {
                 events.push(event);
             }
         }
 
         Ok(events)
-    }
-
-    fn parse_event(buffer: [u8; 64]) -> Option<DeviceEvent> {
-        if buffer[0] != 0x07 {
-            return None;
-        }
-
-        match buffer[1] {
-            0x25 => Some(DeviceEvent::Volume {
-                value: 0x38u8.saturating_sub(buffer[2]),
-            }),
-            0xb5 => Some(DeviceEvent::HeadsetConnection {
-                wireless: buffer[4] == 8,
-                bluetooth: buffer[3] == 1,
-                bluetooth_on: buffer[2] == 4,
-            }),
-            0xb7 => Some(DeviceEvent::Battery {
-                headset: buffer[2],
-                charging: buffer[3],
-            }),
-            _ => None,
-        }
     }
 }
 
@@ -426,12 +343,12 @@ impl ReportKind {
 
 #[cfg(test)]
 mod tests {
-    use super::{Device, DeviceEvent};
+    use super::{DeviceEvent, build_draw_report, parse_event};
 
     #[test]
     fn draw_report_header_matches_expected_wire_format() {
         let framebuffer = crate::framebuffer::Framebuffer::new(128, 64);
-        let report = Device::build_draw_report(&framebuffer, 0, 0, 64, 64);
+        let report = build_draw_report(&framebuffer, 0, 0, 64, 64);
         assert_eq!(report[0], 0x06);
         assert_eq!(report[1], 0x93);
         assert_eq!(report[4], 64);
@@ -446,7 +363,7 @@ mod tests {
         packet[2] = 3;
         packet[3] = 8;
         assert_eq!(
-            Device::parse_event(packet),
+            parse_event(packet),
             Some(DeviceEvent::Battery {
                 headset: 3,
                 charging: 8

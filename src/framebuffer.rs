@@ -100,7 +100,13 @@ impl Framebuffer {
     ) {
         let glyph_width_i32 = glyph_width as i32;
         for (index, ch) in text.chars().enumerate() {
-            self.draw_char_scaled(ch, x + glyph_width_i32 * index as i32, y, glyph_width, glyph_height);
+            self.draw_char_scaled(
+                ch,
+                x + glyph_width_i32 * index as i32,
+                y,
+                glyph_width,
+                glyph_height,
+            );
         }
     }
 
@@ -256,7 +262,10 @@ fn glyph_bounds(glyphs: &[PositionedGlyph<'_>]) -> Option<(i32, i32, i32)> {
     let mut min_y = i32::MAX;
     let mut saw_bounds = false;
 
-    for bounds in glyphs.iter().filter_map(PositionedGlyph::pixel_bounding_box) {
+    for bounds in glyphs
+        .iter()
+        .filter_map(PositionedGlyph::pixel_bounding_box)
+    {
         saw_bounds = true;
         min_x = min_x.min(bounds.min.x);
         max_x = max_x.max(bounds.max.x);

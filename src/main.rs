@@ -1,13 +1,24 @@
-mod daemon;
 mod device;
 mod framebuffer;
-mod ipc;
+mod renderer;
 
-use crate::daemon::DaemonOptions;
+#[cfg(target_os = "linux")]
+mod daemon;
+#[cfg(target_os = "linux")]
+mod ipc;
+#[cfg(target_os = "windows")]
+mod windows_console;
+
 use crate::device::Device;
-use crate::framebuffer::Framebuffer;
+use crate::renderer::{blank_frame, build_text_frame};
+
+#[cfg(target_os = "linux")]
+use crate::daemon::DaemonOptions;
+#[cfg(target_os = "linux")]
 use crate::ipc::{ClientCommand, ServerResponse, default_socket_path, send_command};
-use anyhow::{Context, Result};
+#[cfg(target_os = "linux")]
+use anyhow::Context;
+use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -26,7 +37,7 @@ struct Cli {
 enum Command {
     Daemon(DaemonArgs),
     Text(TextArgs),
-    Clock(SocketArgs),
+    Clock(ClockArgs),
     Clear(SocketArgs),
     Brightness(BrightnessArgs),
     ReturnUi(SocketArgs),
@@ -40,6 +51,21 @@ enum Command {
 struct SocketArgs {
     #[arg(long, value_name = "PATH")]
     socket: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct ClockArgs {
+    #[arg(long, value_name = "PATH")]
+    socket: Option<PathBuf>,
+
+    #[arg(long, default_value_t = 3)]
+    brightness: u8,
+
+    #[arg(long, default_value_t = false, conflicts_with = "blank_on_exit")]
+    restore_ui_on_exit: bool,
+
+    #[arg(long, default_value_t = true, conflicts_with = "restore_ui_on_exit")]
+    blank_on_exit: bool,
 }
 
 #[derive(Args)]
@@ -104,39 +130,111 @@ fn main() {
 fn real_main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Daemon(args) => daemon::run(DaemonOptions {
-            socket_path: args.socket.unwrap_or_else(default_socket_path),
-            brightness: args.brightness,
-            restore_ui_on_exit: args.restore_ui_on_exit,
-            blank_on_exit: args.blank_on_exit,
-        }),
-        Command::Text(args) => send_and_print(
-            args.socket.as_deref(),
-            ClientCommand::SetText {
-                text: args.text,
-                ttl_secs: args.ttl_secs,
-            },
-        ),
-        Command::Clock(args) => send_and_print(args.socket.as_deref(), ClientCommand::ShowClock),
-        Command::Clear(args) => send_and_print(args.socket.as_deref(), ClientCommand::Clear),
-        Command::Brightness(args) => send_and_print(
-            args.socket.as_deref(),
-            ClientCommand::SetBrightness { value: args.value },
-        ),
-        Command::ReturnUi(args) => {
-            send_and_print(args.socket.as_deref(), ClientCommand::ReturnToOfficialUi)
-        }
-        Command::Status(args) => send_and_print(args.socket.as_deref(), ClientCommand::GetStatus),
+        Command::Daemon(args) => run_daemon(args),
+        Command::Text(args) => run_text(args),
+        Command::Clock(args) => run_clock(args),
+        Command::Clear(args) => run_clear(args),
+        Command::Brightness(args) => run_brightness(args),
+        Command::ReturnUi(args) => run_return_ui(args),
+        Command::Status(args) => run_status(args),
         Command::DumpDevices => device::Device::dump_supported_devices(),
         Command::DrawTest(args) => run_draw_test(args),
         Command::BlankTest(args) => run_blank_test(args),
     }
 }
 
+#[cfg(target_os = "linux")]
+fn run_daemon(args: DaemonArgs) -> Result<()> {
+    daemon::run(DaemonOptions {
+        socket_path: args.socket.unwrap_or_else(default_socket_path),
+        brightness: args.brightness,
+        restore_ui_on_exit: args.restore_ui_on_exit,
+        blank_on_exit: args.blank_on_exit,
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn run_daemon(_args: DaemonArgs) -> Result<()> {
+    anyhow::bail!("daemon mode is currently Linux-only")
+}
+
+#[cfg(target_os = "linux")]
+fn run_text(args: TextArgs) -> Result<()> {
+    send_and_print(
+        args.socket.as_deref(),
+        ClientCommand::SetText {
+            text: args.text,
+            ttl_secs: args.ttl_secs,
+        },
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn run_text(args: TextArgs) -> Result<()> {
+    windows_console::draw_text(&args.text, args.ttl_secs)
+}
+
+#[cfg(target_os = "linux")]
+fn run_clock(args: ClockArgs) -> Result<()> {
+    send_and_print(args.socket.as_deref(), ClientCommand::ShowClock)
+}
+
+#[cfg(target_os = "windows")]
+fn run_clock(args: ClockArgs) -> Result<()> {
+    windows_console::run_clock(windows_console::ClockOptions {
+        brightness: args.brightness,
+        restore_ui_on_exit: args.restore_ui_on_exit,
+        blank_on_exit: args.blank_on_exit,
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn run_clear(args: SocketArgs) -> Result<()> {
+    send_and_print(args.socket.as_deref(), ClientCommand::Clear)
+}
+
+#[cfg(target_os = "windows")]
+fn run_clear(_args: SocketArgs) -> Result<()> {
+    windows_console::clear()
+}
+
+#[cfg(target_os = "linux")]
+fn run_brightness(args: BrightnessArgs) -> Result<()> {
+    send_and_print(
+        args.socket.as_deref(),
+        ClientCommand::SetBrightness { value: args.value },
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn run_brightness(args: BrightnessArgs) -> Result<()> {
+    windows_console::set_brightness(args.value)
+}
+
+#[cfg(target_os = "linux")]
+fn run_return_ui(args: SocketArgs) -> Result<()> {
+    send_and_print(args.socket.as_deref(), ClientCommand::ReturnToOfficialUi)
+}
+
+#[cfg(target_os = "windows")]
+fn run_return_ui(_args: SocketArgs) -> Result<()> {
+    windows_console::return_ui()
+}
+
+#[cfg(target_os = "linux")]
+fn run_status(args: SocketArgs) -> Result<()> {
+    send_and_print(args.socket.as_deref(), ClientCommand::GetStatus)
+}
+
+#[cfg(target_os = "windows")]
+fn run_status(_args: SocketArgs) -> Result<()> {
+    windows_console::status()
+}
+
 fn run_draw_test(args: DrawTestArgs) -> Result<()> {
     let device = Device::connect()?;
     device.set_brightness(args.brightness)?;
-    let framebuffer = Framebuffer::from_centered_text_screen(128, 64, &args.text);
+    let framebuffer = build_text_frame(&args.text);
     device.draw_frame(&framebuffer)?;
     if args.return_ui {
         device.return_to_official_ui()?;
@@ -148,11 +246,12 @@ fn run_draw_test(args: DrawTestArgs) -> Result<()> {
 fn run_blank_test(args: BlankTestArgs) -> Result<()> {
     let device = Device::connect()?;
     device.set_brightness(args.brightness)?;
-    device.draw_frame(&Framebuffer::new(128, 64))?;
+    device.draw_frame(&blank_frame())?;
     println!("blank test sent; process exiting");
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn send_and_print(socket: Option<&std::path::Path>, command: ClientCommand) -> Result<()> {
     let socket_path = socket
         .map(PathBuf::from)

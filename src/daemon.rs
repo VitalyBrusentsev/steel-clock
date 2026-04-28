@@ -1,8 +1,8 @@
-use crate::device::{Device, DeviceEvent};
+use crate::device::Device;
 use crate::framebuffer::Framebuffer;
 use crate::ipc::{ClientCommand, DeviceSnapshot, ModeSnapshot, ServerResponse, StatusSnapshot};
+use crate::renderer::{RuntimeStatus, blank_frame, build_clock_frame, build_text_frame};
 use anyhow::{Context, Result, anyhow};
-use chrono::{Local, Timelike};
 use std::fs;
 use std::io::{BufReader, BufWriter, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -14,13 +14,8 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 
-const OLED_WIDTH: usize = 128;
-const OLED_HEIGHT: usize = 64;
 const LOOP_SLEEP: Duration = Duration::from_millis(250);
 const RECONNECT_BACKOFF: Duration = Duration::from_secs(2);
-const CLOCK_TIME_SCALE: usize = 3;
-const CLOCK_TIME_FONT_HEIGHT: f32 = 36.0;
-const CLOCK_DATE_GLYPH_SIZE: usize = 13;
 pub struct DaemonOptions {
     pub socket_path: PathBuf,
     pub brightness: u8,
@@ -37,16 +32,6 @@ enum DisplayMode {
     },
     Cleared,
     OfficialUi,
-}
-
-#[derive(Debug, Default, Clone)]
-struct RuntimeStatus {
-    battery_headset_raw: Option<u8>,
-    battery_charging_raw: Option<u8>,
-    wireless_connected: Option<bool>,
-    bluetooth_paired: Option<bool>,
-    bluetooth_audio_active: Option<bool>,
-    volume_percent: Option<u8>,
 }
 
 pub fn run(options: DaemonOptions) -> Result<()> {
@@ -189,24 +174,7 @@ impl SteelClockDaemon {
             .as_ref()
             .ok_or_else(|| anyhow!("device is not connected"))?;
         for event in device.read_pending_events()? {
-            match event {
-                DeviceEvent::Volume { value } => {
-                    self.device_status.volume_percent = Some(((value as u16 * 100) / 0x38) as u8);
-                }
-                DeviceEvent::Battery { headset, charging } => {
-                    self.device_status.battery_headset_raw = Some(headset);
-                    self.device_status.battery_charging_raw = Some(charging);
-                }
-                DeviceEvent::HeadsetConnection {
-                    wireless,
-                    bluetooth,
-                    bluetooth_on,
-                } => {
-                    self.device_status.wireless_connected = Some(wireless);
-                    self.device_status.bluetooth_paired = Some(bluetooth);
-                    self.device_status.bluetooth_audio_active = Some(bluetooth_on);
-                }
-            }
+            self.device_status.apply_event(event);
         }
 
         Ok(())
@@ -227,13 +195,13 @@ impl SteelClockDaemon {
     }
 
     fn render_clock_if_needed(&mut self) -> Result<()> {
-        let now = Local::now();
+        let now = chrono::Local::now();
         let key = now.format("%Y-%m-%dT%H:%M").to_string();
         if !self.dirty && self.last_clock_key.as_ref() == Some(&key) {
             return Ok(());
         }
 
-        let frame = self.build_clock_frame();
+        let frame = build_clock_frame(&self.device_status);
         self.push_frame_if_changed(frame)?;
         self.last_clock_key = Some(key);
         Ok(())
@@ -244,7 +212,7 @@ impl SteelClockDaemon {
             return Ok(());
         }
 
-        let frame = self.build_text_frame(text);
+        let frame = build_text_frame(text);
         self.push_frame_if_changed(frame)
     }
 
@@ -253,7 +221,7 @@ impl SteelClockDaemon {
             return Ok(());
         }
 
-        self.push_frame_if_changed(Framebuffer::new(OLED_WIDTH, OLED_HEIGHT))
+        self.push_frame_if_changed(blank_frame())
     }
 
     fn render_official_ui_if_needed(&mut self) -> Result<()> {
@@ -285,101 +253,6 @@ impl SteelClockDaemon {
         self.last_frame = Some(frame);
         self.dirty = false;
         Ok(())
-    }
-
-    fn build_clock_frame(&self) -> Framebuffer {
-        let now = Local::now();
-        let minute = now.minute() as usize;
-        let offsets = [-2, -1, 0, 1, 2];
-        let offset = offsets[minute % offsets.len()];
-        let status_lines = self.status_lines();
-        let status_count = status_lines.len();
-
-        let time_y = match status_count {
-            0 => 4,
-            1 => 2,
-            _ => 0,
-        };
-        let (date_y, weekday_y) = match status_count {
-            0 => (39, 53),
-            1 => (36, 49),
-            _ => (31, 44),
-        };
-        let date_text = now.format("%d %b").to_string();
-        let weekday_text = now.format("%A").to_string();
-
-        let mut frame = Framebuffer::new(OLED_WIDTH, OLED_HEIGHT);
-        if !frame.draw_clock_text_centered(
-            &now.format("%H:%M").to_string(),
-            time_y,
-            CLOCK_TIME_FONT_HEIGHT,
-            offset,
-        ) {
-            frame.draw_text_centered(
-                &now.format("%H:%M").to_string(),
-                time_y + 4,
-                CLOCK_TIME_SCALE,
-                offset,
-            );
-        }
-
-        frame.draw_text_centered_scaled(
-            &date_text,
-            date_y,
-            CLOCK_DATE_GLYPH_SIZE,
-            CLOCK_DATE_GLYPH_SIZE,
-            0,
-        );
-        frame.draw_text_centered(&weekday_text, weekday_y, 1, 0);
-
-        if let Some(line) = status_lines.first() {
-            frame.draw_text_centered(line, 48, 1, 0);
-        }
-        if let Some(line) = status_lines.get(1) {
-            frame.draw_text_centered(line, 56, 1, 0);
-        }
-        frame
-    }
-
-    fn build_text_frame(&self, text: &str) -> Framebuffer {
-        Framebuffer::from_centered_text_screen(OLED_WIDTH, OLED_HEIGHT, text)
-    }
-
-    fn status_lines(&self) -> Vec<String> {
-        let mut items = Vec::new();
-
-        if let Some(connected) = self.device_status.wireless_connected {
-            items.push(if connected {
-                "rf:on".to_string()
-            } else {
-                "rf:off".to_string()
-            });
-        }
-
-        if let Some(active) = self.device_status.bluetooth_audio_active {
-            items.push(if active {
-                "bt:on".to_string()
-            } else {
-                "bt:off".to_string()
-            });
-        }
-
-        if let Some(volume) = self.device_status.volume_percent {
-            items.push(format!("vol:{volume:>3}%"));
-        }
-
-        if let Some(battery) = self.device_status.battery_headset_raw {
-            items.push(format!("bat:{battery:>2}"));
-        }
-
-        match items.len() {
-            0 => Vec::new(),
-            1 | 2 => vec![items.join("  ")],
-            _ => {
-                let split_at = items.len().div_ceil(2);
-                vec![items[..split_at].join("  "), items[split_at..].join("  ")]
-            }
-        }
     }
 
     fn handle_requests(&mut self, listener: &UnixListener) -> Result<()> {
@@ -497,7 +370,7 @@ impl SteelClockDaemon {
     fn shutdown(&mut self) {
         if let Some(device) = self.device.as_ref() {
             if self.blank_on_exit {
-                let _ = device.draw_frame(&Framebuffer::new(OLED_WIDTH, OLED_HEIGHT));
+                let _ = device.draw_frame(&blank_frame());
             } else if self.restore_ui_on_exit {
                 let _ = device.return_to_official_ui();
             }
